@@ -1,0 +1,284 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <math.h>
+
+// ===============================
+// PIN CONFIGURATION
+// ===============================
+
+// KY-037 Analog Output
+#define SOUND_PIN 34
+
+// LED
+#define LED_GREEN 13
+#define LED_YELLOW 12
+#define LED_RED 14
+
+// OLED
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDR 0x3C
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+
+// ===============================
+// NOISE THRESHOLD
+// ===============================
+
+#define LOW_THRESHOLD 50.0
+#define HIGH_THRESHOLD 70.0
+
+
+// ===============================
+// CALIBRATION
+// ===============================
+
+// Nilai ini adalah faktor kalibrasi awal.
+// Nanti disesuaikan menggunakan Sound Level Meter.
+
+float DB_OFFSET = 50.0;
+
+
+// ===============================
+// SETUP
+// ===============================
+
+void setup() {
+
+  Serial.begin(115200);
+
+  // LED
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+
+  // ADC
+  analogReadResolution(12);
+  analogSetPinAttenuation(SOUND_PIN, ADC_11db);
+
+  // OLED
+  Wire.begin(21, 22);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("OLED tidak terdeteksi!");
+    while (true);
+  }
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+
+  display.setTextSize(1);
+  display.setCursor(20, 10);
+  display.println("SMART NOISE");
+
+  display.setCursor(25, 25);
+  display.println("MONITORING");
+
+  display.setCursor(30, 45);
+  display.println("Starting...");
+
+  display.display();
+
+  delay(2000);
+}
+
+
+// ===============================
+// READ SOUND LEVEL
+// ===============================
+
+float readSoundLevel() {
+
+  const int samples = 500;
+
+  float sum = 0;
+  float sumSquare = 0;
+
+  // --------------------------------
+  // Mencari nilai rata-rata DC
+  // --------------------------------
+
+  for (int i = 0; i < samples; i++) {
+
+    int raw = analogRead(SOUND_PIN);
+
+    sum += raw;
+
+    delayMicroseconds(200);
+  }
+
+  float mean = sum / samples;
+
+
+  // --------------------------------
+  // Menghitung RMS sinyal AC
+  // --------------------------------
+
+  for (int i = 0; i < samples; i++) {
+
+    int raw = analogRead(SOUND_PIN);
+
+    float ac = raw - mean;
+
+    sumSquare += ac * ac;
+
+    delayMicroseconds(200);
+  }
+
+  float rms = sqrt(sumSquare / samples);
+
+
+  // --------------------------------
+  // Konversi menjadi estimasi dB
+  // --------------------------------
+
+  // Hindari log(0)
+  if (rms < 1) {
+    rms = 1;
+  }
+
+  float dB = 20.0 * log10(rms) + DB_OFFSET;
+
+  return dB;
+}
+
+
+// ===============================
+// DETERMINE NOISE STATUS
+// ===============================
+
+String getNoiseStatus(float dB) {
+
+  if (dB < LOW_THRESHOLD) {
+    return "RENDAH";
+  }
+
+  else if (dB < HIGH_THRESHOLD) {
+    return "SEDANG";
+  }
+
+  else {
+    return "TINGGI";
+  }
+}
+
+
+// ===============================
+// CONTROL LED
+// ===============================
+
+void updateLED(float dB) {
+
+  // Matikan semua LED
+  digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_RED, LOW);
+
+
+  // RENDAH
+  if (dB < LOW_THRESHOLD) {
+
+    digitalWrite(LED_GREEN, HIGH);
+
+  }
+
+  // SEDANG
+  else if (dB < HIGH_THRESHOLD) {
+
+    digitalWrite(LED_YELLOW, HIGH);
+
+  }
+
+  // TINGGI
+  else {
+
+    digitalWrite(LED_RED, HIGH);
+  }
+}
+
+
+// ===============================
+// OLED DISPLAY
+// ===============================
+
+void updateOLED(float dB, String status) {
+
+  display.clearDisplay();
+
+  // Judul
+  display.setTextSize(1);
+  display.setCursor(25, 0);
+  display.println("SMART NOISE");
+
+
+  // Nilai dB
+  display.setTextSize(2);
+  display.setCursor(5, 15);
+  display.print(dB, 1);
+  display.println(" dB");
+
+
+  // Status
+  display.setTextSize(1);
+  display.setCursor(5, 42);
+  display.print("Status: ");
+
+  display.println(status);
+
+
+  // Indicator
+  display.setCursor(5, 55);
+
+  if (status == "RENDAH") {
+    display.println("Noise Level LOW");
+  }
+
+  else if (status == "SEDANG") {
+    display.println("Noise Level MEDIUM");
+  }
+
+  else {
+    display.println("Noise Level HIGH");
+  }
+
+  display.display();
+}
+
+
+// ===============================
+// MAIN LOOP
+// ===============================
+
+void loop() {
+
+  // Membaca tingkat suara
+  float dB = readSoundLevel();
+
+  // Menentukan status
+  String status = getNoiseStatus(dB);
+
+  // Mengatur LED
+  updateLED(dB);
+
+  // Menampilkan OLED
+  updateOLED(dB, status);
+
+
+  // Serial Monitor
+  Serial.println("======================");
+
+  Serial.print("Noise Level : ");
+  Serial.print(dB, 1);
+  Serial.println(" dB");
+
+  Serial.print("Status      : ");
+  Serial.println(status);
+
+  Serial.println("======================");
+
+
+  // Update setiap 1 detik
+  delay(1000);
+}
