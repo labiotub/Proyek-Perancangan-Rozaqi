@@ -1,62 +1,35 @@
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
-
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <DHT.h>
 #include <math.h>
 
-// =====================================================
 // WIFI CONFIGURATION
-// =====================================================
-
 #define WIFI_SSID "MASUKKAN_NAMA_WIFI"
 #define WIFI_PASSWORD "MASUKKAN_PASSWORD_WIFI"
 
-
-// =====================================================
 // FIREBASE CONFIGURATION
-// =====================================================
-
-// Masukkan API Key Firebase & URL Realtime Databas
+// Masukkan Web API Key Firebase & URL Realtime Database
 #define API_KEY "MASUKKAN_FIREBASE_API_KEY"
 #define DATABASE_URL "MASUKKAN_FIREBASE_DATABASE_URL"
 
-// Akun Authentication Firebase
-#define USER_EMAIL "MASUKKAN_EMAIL_FIREBASE"
-#define USER_PASSWORD "MASUKKAN_PASSWORD_FIREBASE"
-
-
-// =====================================================
 // LOCATION CONFIGURATION
-// =====================================================
-
 // Pilih lokasi alat:
 //
 // Alat 1 : "kantin"
 // Alat 2 : "perpustakaan"
 // Alat 3 : "parkiran"
-
 #define LOCATION "kantin"
 
-
-// =====================================================
 // FIREBASE OBJECT
-// =====================================================
-
 FirebaseData fbdo;
-FirebaseAuth auth;
 FirebaseConfig config;
 
-
-// =====================================================
 // PIN CONFIGURATION
-// =====================================================
-
 // KY-037
 #define SOUND_PIN 34
-
 
 // DHT11
 #define DHT_PIN 4
@@ -78,11 +51,7 @@ DHT dht(
 #define OLED_SDA 21
 #define OLED_SCL 22
 
-
-// =====================================================
 // OLED CONFIGURATION
-// =====================================================
-
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_ADDRESS 0x3C
@@ -94,55 +63,33 @@ Adafruit_SSD1306 display(
   -1
 );
 
-
-// =====================================================
 // NOISE THRESHOLD
-// =====================================================
-
 // < 60 dB       = Good
 // 60 - 100 dB   = Getting Too Loud
 // > 100 dB      = Too Loud!!!
-
 #define LOW_THRESHOLD 60.0
 #define HIGH_THRESHOLD 100.0
 
-
-// =====================================================
 // CALIBRATION
-// =====================================================
-
 // Offset awal untuk estimasi dB.
 // Nilai ini dapat disesuaikan
 // berdasarkan hasil kalibrasi.
 
 float DB_OFFSET = 50.0;
 
-
-// =====================================================
 // FIREBASE TIMING
-// =====================================================
-
 // Pengiriman data ke Firebase
 // dilakukan setiap 3 detik.
-
 unsigned long previousFirebaseMillis = 0;
 
 const unsigned long FIREBASE_INTERVAL = 3000;
 
-
-// =====================================================
 // SETUP
-// =====================================================
-
 void setup() {
 
   Serial.begin(115200);
 
-
-  // ===================================================
   // LED
-  // ===================================================
-
   pinMode(
     LED_GREEN,
     OUTPUT
@@ -160,7 +107,6 @@ void setup() {
 
 
   // Pastikan semua LED mati saat awal
-
   digitalWrite(
     LED_GREEN,
     LOW
@@ -176,11 +122,7 @@ void setup() {
     LOW
   );
 
-
-  // ===================================================
   // ADC ESP32
-  // ===================================================
-
   analogReadResolution(12);
 
   analogSetPinAttenuation(
@@ -188,18 +130,10 @@ void setup() {
     ADC_11db
   );
 
-
-  // ===================================================
   // DHT11
-  // ===================================================
-
   dht.begin();
 
-
-  // ===================================================
   // OLED
-  // ===================================================
-
   Wire.begin(
     OLED_SDA,
     OLED_SCL
@@ -218,11 +152,7 @@ void setup() {
     while (true);
   }
 
-
-  // ===================================================
   // TAMPILAN AWAL OLED
-  // ===================================================
-
   display.clearDisplay();
 
   display.setTextColor(
@@ -231,11 +161,7 @@ void setup() {
 
   display.setTextSize(1);
 
-
-  // ---------------------------------------------------
   // Judul pertama
-  // ---------------------------------------------------
-
   String title1 =
     "Smart Noise";
 
@@ -261,11 +187,7 @@ void setup() {
     title1
   );
 
-
-  // ---------------------------------------------------
   // Judul kedua
-  // ---------------------------------------------------
-
   String title2 =
     "Monitoring";
 
@@ -288,11 +210,7 @@ void setup() {
     title2
   );
 
-
-  // ---------------------------------------------------
   // Starting
-  // ---------------------------------------------------
-
   String starting =
     "Starting...";
 
@@ -319,11 +237,7 @@ void setup() {
 
   delay(2000);
 
-
-  // ===================================================
   // WIFI CONNECTION
-  // ===================================================
-
   Serial.println();
   Serial.println(
     "Connecting to WiFi..."
@@ -341,9 +255,7 @@ void setup() {
 
     delay(500);
 
-    Serial.print(
-      "."
-    );
+    Serial.print(".");
   }
 
 
@@ -361,39 +273,20 @@ void setup() {
     WiFi.localIP()
   );
 
-
-  // ===================================================
   // FIREBASE CONFIGURATION
-  // ===================================================
-
   config.api_key =
     API_KEY;
 
   config.database_url =
     DATABASE_URL;
 
-
-  // ===================================================
-  // FIREBASE AUTHENTICATION
-  // ===================================================
-
-  auth.user.email =
-    USER_EMAIL;
-
-  auth.user.password =
-    USER_PASSWORD;
-
-
-  // ===================================================
   // START FIREBASE
-  // ===================================================
-
   Firebase.begin(
     &config,
-    &auth
+    nullptr
   );
 
-  Firebase.reconnectWiFi(
+  Firebase.reconnectNetwork(
     true
   );
 
@@ -402,11 +295,7 @@ void setup() {
     "Firebase initialized!"
   );
 
-
-  // ===================================================
   // LOCATION INFORMATION
-  // ===================================================
-
   Serial.print(
     "Location: "
   );
@@ -420,22 +309,14 @@ void setup() {
   );
 }
 
-
-// =====================================================
 // READ SOUND LEVEL
-// =====================================================
-
 float readNoiseLevel() {
 
   const int samples = 500;
 
   float sum = 0;
 
-
-  // ---------------------------------------------------
   // Mengambil rata-rata sinyal
-  // ---------------------------------------------------
-
   for (
     int i = 0;
     i < samples;
@@ -454,17 +335,11 @@ float readNoiseLevel() {
     );
   }
 
-
   float mean =
     sum / samples;
 
-
-  // ---------------------------------------------------
   // Menghitung RMS sinyal AC
-  // ---------------------------------------------------
-
   float sumSquare = 0;
-
 
   for (
     int i = 0;
@@ -489,18 +364,13 @@ float readNoiseLevel() {
     );
   }
 
-
   float rms =
     sqrt(
       sumSquare /
       samples
     );
 
-
-  // ---------------------------------------------------
   // Hindari log(0)
-  // ---------------------------------------------------
-
   if (
     rms < 1
   ) {
@@ -508,11 +378,7 @@ float readNoiseLevel() {
     rms = 1;
   }
 
-
-  // ---------------------------------------------------
   // Estimasi nilai dB
-  // ---------------------------------------------------
-
   float dB =
     20.0 *
     log10(rms)
@@ -522,9 +388,7 @@ float readNoiseLevel() {
   return dB;
 }
 
-// =====================================================
 // DETERMINE NOISE STATUS
-// =====================================================
 String getStatus(
   float dB
 ) {
@@ -573,6 +437,8 @@ void updateLED(
     LOW
   );
 
+
+  // ---------------------------------------------------
   // GOOD
   // < 60 dB
   if (
@@ -585,6 +451,8 @@ void updateLED(
     );
   }
 
+
+  // ---------------------------------------------------
   // GETTING TOO LOUD
   // 60 - 100 dB
   else if (
@@ -597,6 +465,7 @@ void updateLED(
     );
   }
 
+  // ---------------------------------------------------
   // TOO LOUD
   // > 100 dB
   else {
@@ -924,7 +793,7 @@ void sendToFirebase(
     LOCATION
   );
 
-  // TIMESTAMP
+  // TIMESTAMP SEMENTARA
   Firebase.RTDB.setString(
     &fbdo,
     basePath + "/last_update",
@@ -1082,7 +951,5 @@ void loop() {
       humidity
     );
   }
-
-  // UPDATE SETIAP 1 DETIK
   delay(2000);
 }
