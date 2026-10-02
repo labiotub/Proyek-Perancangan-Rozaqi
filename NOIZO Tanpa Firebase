@@ -1,0 +1,744 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <DHT.h>
+#include <math.h>
+
+// =====================================================
+// PIN CONFIGURATION
+// =====================================================
+
+// KY-037
+#define SOUND_PIN 34
+
+// DHT22
+#define DHT_PIN 4
+#define DHT_TYPE DHT22
+
+DHT dht(DHT_PIN, DHT_TYPE);
+
+// LED
+#define LED_GREEN 13
+#define LED_YELLOW 12
+#define LED_RED 14
+
+// OLED I2C
+#define OLED_SDA 21
+#define OLED_SCL 22
+
+
+// =====================================================
+// OLED CONFIGURATION
+// =====================================================
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDRESS 0x3C
+
+Adafruit_SSD1306 display(
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  &Wire,
+  -1
+);
+
+
+// =====================================================
+// NOISE THRESHOLD
+// =====================================================
+
+// < 60 dB       = Good
+// 60 - 100 dB   = Getting Too Loud
+// > 100 dB      = Too Loud!!!
+
+#define LOW_THRESHOLD 60.0
+#define HIGH_THRESHOLD 100.0
+
+
+// =====================================================
+// CALIBRATION
+// =====================================================
+
+// Offset untuk estimasi dB
+// Sesuaikan berdasarkan hasil kalibrasi
+
+float DB_OFFSET = 50.0;
+
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup() {
+
+  Serial.begin(115200);
+
+
+  // ---------------------------------------------------
+  // LED
+  // ---------------------------------------------------
+
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+
+  // Semua LED mati saat awal
+
+  digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_RED, LOW);
+
+
+  // ---------------------------------------------------
+  // ADC ESP32
+  // ---------------------------------------------------
+
+  analogReadResolution(12);
+
+  analogSetPinAttenuation(
+    SOUND_PIN,
+    ADC_11db
+  );
+
+
+  // ---------------------------------------------------
+  // DHT22
+  // ---------------------------------------------------
+
+  dht.begin();
+
+
+  // ---------------------------------------------------
+  // OLED
+  // ---------------------------------------------------
+
+  Wire.begin(
+    OLED_SDA,
+    OLED_SCL
+  );
+
+  if (!display.begin(
+        SSD1306_SWITCHCAPVCC,
+        OLED_ADDRESS
+      )) {
+
+    Serial.println(
+      "OLED tidak ditemukan!"
+    );
+
+    while (true);
+  }
+
+
+  // ---------------------------------------------------
+  // Tampilan awal OLED
+  // ---------------------------------------------------
+
+  display.clearDisplay();
+
+  display.setTextColor(
+    SSD1306_WHITE
+  );
+
+  display.setTextSize(1);
+
+
+  // ---------------------------------------------------
+  // Judul pertama
+  // ---------------------------------------------------
+
+  String title1 = "Smart Noise";
+
+  int16_t x1, y1;
+  uint16_t w, h;
+
+  display.getTextBounds(
+    title1,
+    0,
+    0,
+    &x1,
+    &y1,
+    &w,
+    &h
+  );
+
+  display.setCursor(
+    (SCREEN_WIDTH - w) / 2,
+    5
+  );
+
+  display.println(title1);
+
+
+  // ---------------------------------------------------
+  // Judul kedua
+  // ---------------------------------------------------
+
+  String title2 = "Monitoring";
+
+  display.getTextBounds(
+    title2,
+    0,
+    0,
+    &x1,
+    &y1,
+    &w,
+    &h
+  );
+
+  display.setCursor(
+    (SCREEN_WIDTH - w) / 2,
+    18
+  );
+
+  display.println(title2);
+
+
+  // ---------------------------------------------------
+  // Starting
+  // ---------------------------------------------------
+
+  String starting = "Starting...";
+
+  display.getTextBounds(
+    starting,
+    0,
+    0,
+    &x1,
+    &y1,
+    &w,
+    &h
+  );
+
+  display.setCursor(
+    (SCREEN_WIDTH - w) / 2,
+    45
+  );
+
+  display.println(starting);
+
+  display.display();
+
+  delay(2000);
+}
+
+
+// =====================================================
+// READ SOUND LEVEL
+// =====================================================
+
+float readNoiseLevel() {
+
+  const int samples = 500;
+
+  float sum = 0;
+
+
+  // ---------------------------------------------------
+  // Mengambil rata-rata sinyal
+  // ---------------------------------------------------
+
+  for (int i = 0; i < samples; i++) {
+
+    int raw = analogRead(
+      SOUND_PIN
+    );
+
+    sum += raw;
+
+    delayMicroseconds(200);
+  }
+
+
+  float mean =
+    sum / samples;
+
+
+  // ---------------------------------------------------
+  // Menghitung RMS sinyal AC
+  // ---------------------------------------------------
+
+  float sumSquare = 0;
+
+  for (int i = 0; i < samples; i++) {
+
+    int raw = analogRead(
+      SOUND_PIN
+    );
+
+    float acSignal =
+      raw - mean;
+
+    sumSquare +=
+      acSignal * acSignal;
+
+    delayMicroseconds(200);
+  }
+
+
+  float rms =
+    sqrt(
+      sumSquare / samples
+    );
+
+
+  // ---------------------------------------------------
+  // Hindari log(0)
+  // ---------------------------------------------------
+
+  if (rms < 1) {
+
+    rms = 1;
+  }
+
+
+  // ---------------------------------------------------
+  // Estimasi nilai dB
+  // ---------------------------------------------------
+
+  float dB =
+    20.0 * log10(rms)
+    + DB_OFFSET;
+
+
+  return dB;
+}
+
+
+// =====================================================
+// DETERMINE NOISE STATUS
+// =====================================================
+
+String getStatus(float dB) {
+
+  // ---------------------------------------------------
+  // Kurang dari 60 dB
+  // ---------------------------------------------------
+
+  if (dB < LOW_THRESHOLD) {
+
+    return "Good";
+  }
+
+
+  // ---------------------------------------------------
+  // 60 sampai 100 dB
+  // ---------------------------------------------------
+
+  else if (dB <= HIGH_THRESHOLD) {
+
+    return "Getting Too Loud";
+  }
+
+
+  // ---------------------------------------------------
+  // Lebih dari 100 dB
+  // ---------------------------------------------------
+
+  else {
+
+    return "Too Loud!!!";
+  }
+}
+
+
+// =====================================================
+// LED INDICATOR
+// =====================================================
+
+void updateLED(float dB) {
+
+  // ---------------------------------------------------
+  // Matikan semua LED terlebih dahulu
+  // ---------------------------------------------------
+
+  digitalWrite(
+    LED_GREEN,
+    LOW
+  );
+
+  digitalWrite(
+    LED_YELLOW,
+    LOW
+  );
+
+  digitalWrite(
+    LED_RED,
+    LOW
+  );
+
+
+  // ---------------------------------------------------
+  // GOOD
+  // < 60 dB
+  // ---------------------------------------------------
+
+  if (dB < LOW_THRESHOLD) {
+
+    digitalWrite(
+      LED_GREEN,
+      HIGH
+    );
+  }
+
+
+  // ---------------------------------------------------
+  // GETTING TOO LOUD
+  // 60 - 100 dB
+  // ---------------------------------------------------
+
+  else if (dB <= HIGH_THRESHOLD) {
+
+    digitalWrite(
+      LED_YELLOW,
+      HIGH
+    );
+  }
+
+
+  // ---------------------------------------------------
+  // TOO LOUD
+  // > 100 dB
+  // ---------------------------------------------------
+
+  else {
+
+    digitalWrite(
+      LED_RED,
+      HIGH
+    );
+  }
+}
+
+
+// =====================================================
+// OLED DISPLAY
+// =====================================================
+
+void updateOLED(
+  float dB,
+  String status,
+  float temperature,
+  float humidity
+) {
+
+  display.clearDisplay();
+
+  display.setTextColor(
+    SSD1306_WHITE
+  );
+
+
+  // ===================================================
+  // TITLE
+  // ===================================================
+
+  display.setTextSize(1);
+
+  String title1 =
+    "Smart Noise";
+
+  String title2 =
+    "Monitoring";
+
+  int16_t x1, y1;
+  uint16_t w, h;
+
+
+  // ---------------------------------------------------
+  // Smart Noise
+  // ---------------------------------------------------
+
+  display.getTextBounds(
+    title1,
+    0,
+    0,
+    &x1,
+    &y1,
+    &w,
+    &h
+  );
+
+  display.setCursor(
+    (SCREEN_WIDTH - w) / 2,
+    0
+  );
+
+  display.println(title1);
+
+
+  // ---------------------------------------------------
+  // Monitoring
+  // ---------------------------------------------------
+
+  display.getTextBounds(
+    title2,
+    0,
+    0,
+    &x1,
+    &y1,
+    &w,
+    &h
+  );
+
+  display.setCursor(
+    (SCREEN_WIDTH - w) / 2,
+    9
+  );
+
+  display.println(title2);
+
+
+  // ===================================================
+  // dB VALUE
+  // ===================================================
+
+  display.setTextSize(2);
+
+  String dbText =
+    String(dB, 1) + " dB";
+
+  display.getTextBounds(
+    dbText,
+    0,
+    0,
+    &x1,
+    &y1,
+    &w,
+    &h
+  );
+
+  display.setCursor(
+    (SCREEN_WIDTH - w) / 2,
+    20
+  );
+
+  display.println(dbText);
+
+
+  // ===================================================
+  // STATUS
+  // ===================================================
+
+  display.setTextSize(1);
+
+  display.getTextBounds(
+    status,
+    0,
+    0,
+    &x1,
+    &y1,
+    &w,
+    &h
+  );
+
+  display.setCursor(
+    (SCREEN_WIDTH - w) / 2,
+    39
+  );
+
+  display.println(status);
+
+
+  // ===================================================
+  // TEMPERATURE & HUMIDITY
+  // ===================================================
+
+  display.setCursor(
+    5,
+    53
+  );
+
+  if (isnan(temperature)) {
+
+    display.print(
+      "T: Error"
+    );
+
+  } else {
+
+    display.print(
+      "T:"
+    );
+
+    display.print(
+      temperature,
+      1
+    );
+
+    display.print(
+      "C"
+    );
+  }
+
+
+  display.setCursor(
+    70,
+    53
+  );
+
+  if (isnan(humidity)) {
+
+    display.print(
+      "H: Error"
+    );
+
+  } else {
+
+    display.print(
+      "H:"
+    );
+
+    display.print(
+      humidity,
+      1
+    );
+
+    display.print(
+      "%"
+    );
+  }
+
+
+  // ---------------------------------------------------
+  // Tampilkan OLED
+  // ---------------------------------------------------
+
+  display.display();
+}
+
+
+// =====================================================
+// MAIN LOOP
+// =====================================================
+
+void loop() {
+
+
+  // ===================================================
+  // READ NOISE
+  // ===================================================
+
+  float dB =
+    readNoiseLevel();
+
+
+  // ===================================================
+  // READ DHT22
+  // ===================================================
+
+  float temperature =
+    dht.readTemperature();
+
+  float humidity =
+    dht.readHumidity();
+
+
+  // ===================================================
+  // NOISE STATUS
+  // ===================================================
+
+  String status =
+    getStatus(dB);
+
+
+  // ===================================================
+  // UPDATE LED
+  // ===================================================
+
+  updateLED(dB);
+
+
+  // ===================================================
+  // UPDATE OLED
+  // ===================================================
+
+  updateOLED(
+    dB,
+    status,
+    temperature,
+    humidity
+  );
+
+
+  // ===================================================
+  // SERIAL MONITOR
+  // ===================================================
+
+  Serial.println(
+    "=============================="
+  );
+
+  Serial.print(
+    "Noise Level : "
+  );
+
+  Serial.print(
+    dB,
+    1
+  );
+
+  Serial.println(
+    " dB"
+  );
+
+
+  Serial.print(
+    "Status      : "
+  );
+
+  Serial.println(
+    status
+  );
+
+
+  Serial.print(
+    "Temperature : "
+  );
+
+  if (isnan(temperature)) {
+
+    Serial.println(
+      "Error"
+    );
+
+  } else {
+
+    Serial.print(
+      temperature,
+      1
+    );
+
+    Serial.println(
+      " C"
+    );
+  }
+
+
+  Serial.print(
+    "Humidity    : "
+  );
+
+  if (isnan(humidity)) {
+
+    Serial.println(
+      "Error"
+    );
+
+  } else {
+
+    Serial.print(
+      humidity,
+      1
+    );
+
+    Serial.println(
+      " %"
+    );
+  }
+
+  Serial.println(
+    "=============================="
+  );
+  delay(3000);
+}
