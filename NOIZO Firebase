@@ -6,18 +6,19 @@
 #include <DHT.h>
 #include <math.h>
 
+// Helper bawaan library Firebase ESP Client
+#include <addons/TokenHelper.h>
+#include <addons/RTDBHelper.h>
+
 // WIFI CONFIGURATION
-#define WIFI_SSID "MASUKKAN_NAMA_WIFI"
-#define WIFI_PASSWORD "MASUKKAN_PASSWORD_WIFI"
+#define WIFI_SSID "Lab_IoT"
+#define WIFI_PASSWORD "L@bi0t63"
 
 // FIREBASE CONFIGURATION
-// Masukkan Web API Key Firebase & URL Realtime Database
-#define API_KEY "MASUKKAN_FIREBASE_API_KEY"
-#define DATABASE_URL "MASUKKAN_FIREBASE_DATABASE_URL"
+#define API_KEY "AIzaSyAu-MkIeEmsP1Db1kecR3IipR7FcFtxoac"
+#define DATABASE_URL "https://noizo-c6435-default-rtdb.firebaseio.com"
 
 // LOCATION CONFIGURATION
-// Pilih lokasi alat:
-//
 // Alat 1 : "kantin"
 // Alat 2 : "perpustakaan"
 // Alat 3 : "parkiran"
@@ -25,43 +26,30 @@
 
 // FIREBASE OBJECT
 FirebaseData fbdo;
+FirebaseAuth auth;
 FirebaseConfig config;
 
+bool signupOK = false;
+
 // PIN CONFIGURATION
-// KY-037
 #define SOUND_PIN 34
 
-// DHT11
 #define DHT_PIN 4
-#define DHT_TYPE DHT11
+#define DHT_TYPE DHT22
+DHT dht(DHT_PIN, DHT_TYPE);
 
-DHT dht(
-  DHT_PIN,
-  DHT_TYPE
-);
-
-
-// LED
 #define LED_GREEN 13
 #define LED_YELLOW 12
 #define LED_RED 14
 
-
-// OLED I2C
 #define OLED_SDA 21
 #define OLED_SCL 22
 
-// OLED CONFIGURATION
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_ADDRESS 0x3C
 
-Adafruit_SSD1306 display(
-  SCREEN_WIDTH,
-  SCREEN_HEIGHT,
-  &Wire,
-  -1
-);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 // NOISE THRESHOLD
 // < 60 dB       = Good
@@ -71,885 +59,315 @@ Adafruit_SSD1306 display(
 #define HIGH_THRESHOLD 100.0
 
 // CALIBRATION
-// Offset awal untuk estimasi dB.
-// Nilai ini dapat disesuaikan
-// berdasarkan hasil kalibrasi.
-
 float DB_OFFSET = 50.0;
 
-// FIREBASE TIMING
-// Pengiriman data ke Firebase
-// dilakukan setiap 3 detik.
-unsigned long previousFirebaseMillis = 0;
+// Nilai DHT valid terakhir (dipakai jika pembacaan gagal)
+float lastTemperature = NAN;
+float lastHumidity = NAN;
 
+// FIREBASE TIMING (kirim setiap 3 detik)
+unsigned long previousFirebaseMillis = 0;
 const unsigned long FIREBASE_INTERVAL = 3000;
+
+// HELPER: teks rata tengah di OLED
+void drawCentered(String text, int y) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - w) / 2, y);
+  display.println(text);
+}
 
 // SETUP
 void setup() {
-
   Serial.begin(115200);
 
   // LED
-  pinMode(
-    LED_GREEN,
-    OUTPUT
-  );
-
-  pinMode(
-    LED_YELLOW,
-    OUTPUT
-  );
-
-  pinMode(
-    LED_RED,
-    OUTPUT
-  );
-
-
-  // Pastikan semua LED mati saat awal
-  digitalWrite(
-    LED_GREEN,
-    LOW
-  );
-
-  digitalWrite(
-    LED_YELLOW,
-    LOW
-  );
-
-  digitalWrite(
-    LED_RED,
-    LOW
-  );
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+  digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_RED, LOW);
 
   // ADC ESP32
   analogReadResolution(12);
+  analogSetPinAttenuation(SOUND_PIN, ADC_11db);
 
-  analogSetPinAttenuation(
-    SOUND_PIN,
-    ADC_11db
-  );
-
-  // DHT11
-  dht.begin();
+    dht.begin();
 
   // OLED
-  Wire.begin(
-    OLED_SDA,
-    OLED_SCL
-  );
+  Wire.begin(OLED_SDA, OLED_SCL);
 
-
-  if (!display.begin(
-        SSD1306_SWITCHCAPVCC,
-        OLED_ADDRESS
-      )) {
-
-    Serial.println(
-      "OLED tidak ditemukan!"
-    );
-
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
+    Serial.println("OLED tidak ditemukan!");
     while (true);
   }
 
   // TAMPILAN AWAL OLED
   display.clearDisplay();
-
-  display.setTextColor(
-    SSD1306_WHITE
-  );
-
+  display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
-
-  // Judul pertama
-  String title1 =
-    "Smart Noise";
-
-  int16_t x1, y1;
-  uint16_t w, h;
-
-  display.getTextBounds(
-    title1,
-    0,
-    0,
-    &x1,
-    &y1,
-    &w,
-    &h
-  );
-
-  display.setCursor(
-    (SCREEN_WIDTH - w) / 2,
-    5
-  );
-
-  display.println(
-    title1
-  );
-
-  // Judul kedua
-  String title2 =
-    "Monitoring";
-
-  display.getTextBounds(
-    title2,
-    0,
-    0,
-    &x1,
-    &y1,
-    &w,
-    &h
-  );
-
-  display.setCursor(
-    (SCREEN_WIDTH - w) / 2,
-    18
-  );
-
-  display.println(
-    title2
-  );
-
-  // Starting
-  String starting =
-    "Starting...";
-
-  display.getTextBounds(
-    starting,
-    0,
-    0,
-    &x1,
-    &y1,
-    &w,
-    &h
-  );
-
-  display.setCursor(
-    (SCREEN_WIDTH - w) / 2,
-    45
-  );
-
-  display.println(
-    starting
-  );
-
+  drawCentered("Smart Noise", 5);
+  drawCentered("Monitoring", 18);
+  drawCentered("Starting...", 45);
   display.display();
-
   delay(2000);
 
   // WIFI CONNECTION
   Serial.println();
-  Serial.println(
-    "Connecting to WiFi..."
-  );
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  WiFi.begin(
-    WIFI_SSID,
-    WIFI_PASSWORD
-  );
-
-
-  while (
-    WiFi.status() != WL_CONNECTED
-  ) {
-
+  while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-
     Serial.print(".");
   }
 
-
   Serial.println();
-
-  Serial.println(
-    "WiFi connected!"
-  );
-
-  Serial.print(
-    "IP Address: "
-  );
-
-  Serial.println(
-    WiFi.localIP()
-  );
+  Serial.println("WiFi connected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 
   // FIREBASE CONFIGURATION
-  config.api_key =
-    API_KEY;
+  config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
 
-  config.database_url =
-    DATABASE_URL;
+  // Anonymous sign-in
+  if (Firebase.signUp(&config, &auth, "", "")) {
+    Serial.println("Firebase sign-up anonymous berhasil!");
+    signupOK = true;
+  } else {
+    Serial.print("Sign-up gagal: ");
+    Serial.println(config.signer.signupError.message.c_str());
+  }
 
-  // START FIREBASE
-  Firebase.begin(
-    &config,
-    nullptr
-  );
+  config.token_status_callback = tokenStatusCallback;
 
-  Firebase.reconnectNetwork(
-    true
-  );
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectNetwork(true);
 
-
-  Serial.println(
-    "Firebase initialized!"
-  );
+  Serial.println("Firebase initialized!");
 
   // LOCATION INFORMATION
-  Serial.print(
-    "Location: "
-  );
-
-  Serial.println(
-    LOCATION
-  );
-
-  Serial.println(
-    "System ready!"
-  );
+  Serial.print("Location: ");
+  Serial.println(LOCATION);
+  Serial.println("System ready!");
 }
 
 // READ SOUND LEVEL
 float readNoiseLevel() {
-
   const int samples = 500;
 
+  // Rata-rata sinyal (DC offset)
   float sum = 0;
-
-  // Mengambil rata-rata sinyal
-  for (
-    int i = 0;
-    i < samples;
-    i++
-  ) {
-
-    int raw =
-      analogRead(
-        SOUND_PIN
-      );
-
-    sum += raw;
-
-    delayMicroseconds(
-      200
-    );
+  for (int i = 0; i < samples; i++) {
+    sum += analogRead(SOUND_PIN);
+    delayMicroseconds(200);
   }
+  float mean = sum / samples;
 
-  float mean =
-    sum / samples;
-
-  // Menghitung RMS sinyal AC
+  // RMS sinyal AC
   float sumSquare = 0;
-
-  for (
-    int i = 0;
-    i < samples;
-    i++
-  ) {
-
-    int raw =
-      analogRead(
-        SOUND_PIN
-      );
-
-    float acSignal =
-      raw - mean;
-
-    sumSquare +=
-      acSignal *
-      acSignal;
-
-    delayMicroseconds(
-      200
-    );
+  for (int i = 0; i < samples; i++) {
+    float acSignal = analogRead(SOUND_PIN) - mean;
+    sumSquare += acSignal * acSignal;
+    delayMicroseconds(200);
   }
-
-  float rms =
-    sqrt(
-      sumSquare /
-      samples
-    );
+  float rms = sqrt(sumSquare / samples);
 
   // Hindari log(0)
-  if (
-    rms < 1
-  ) {
-
+  if (rms < 1) {
     rms = 1;
   }
 
   // Estimasi nilai dB
-  float dB =
-    20.0 *
-    log10(rms)
-    + DB_OFFSET;
-
-
-  return dB;
+  return 20.0 * log10(rms) + DB_OFFSET;
 }
 
 // DETERMINE NOISE STATUS
-String getStatus(
-  float dB
-) {
-
-  // Kurang dari 60 dB
-  if (
-    dB < LOW_THRESHOLD
-  ) {
-
+String getStatus(float dB) {
+  if (dB < LOW_THRESHOLD) {
     return "Good";
-  }
-
-  // 60 sampai 100 dB
-  else if (
-    dB <= HIGH_THRESHOLD
-  ) {
-
+  } else if (dB <= HIGH_THRESHOLD) {
     return "Getting Too Loud";
-  }
-
-  // Lebih dari 100 dB
-  else {
-
+  } else {
     return "Too Loud!!!";
   }
 }
 
 // LED INDICATOR
-void updateLED(
-  float dB
-) {
+void updateLED(float dB) {
+  digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_RED, LOW);
 
-  // Matikan semua LED terlebih dahulu
-  digitalWrite(
-    LED_GREEN,
-    LOW
-  );
-
-  digitalWrite(
-    LED_YELLOW,
-    LOW
-  );
-
-  digitalWrite(
-    LED_RED,
-    LOW
-  );
-
-
-  // ---------------------------------------------------
-  // GOOD
-  // < 60 dB
-  if (
-    dB < LOW_THRESHOLD
-  ) {
-
-    digitalWrite(
-      LED_GREEN,
-      HIGH
-    );
-  }
-
-
-  // ---------------------------------------------------
-  // GETTING TOO LOUD
-  // 60 - 100 dB
-  else if (
-    dB <= HIGH_THRESHOLD
-  ) {
-
-    digitalWrite(
-      LED_YELLOW,
-      HIGH
-    );
-  }
-
-  // ---------------------------------------------------
-  // TOO LOUD
-  // > 100 dB
-  else {
-
-    digitalWrite(
-      LED_RED,
-      HIGH
-    );
+  if (dB < LOW_THRESHOLD) {
+    digitalWrite(LED_GREEN, HIGH);
+  } else if (dB <= HIGH_THRESHOLD) {
+    digitalWrite(LED_YELLOW, HIGH);
+  } else {
+    digitalWrite(LED_RED, HIGH);
   }
 }
 
 // OLED DISPLAY
-void updateOLED(
-  float dB,
-  String status,
-  float temperature,
-  float humidity
-) {
-
+void updateOLED(float dB, String status, float temperature, float humidity) {
   display.clearDisplay();
-
-  display.setTextColor(
-    SSD1306_WHITE
-  );
+  display.setTextColor(SSD1306_WHITE);
 
   // TITLE
   display.setTextSize(1);
-
-  String title1 =
-    "Smart Noise";
-
-  String title2 =
-    "Monitoring";
-
-  int16_t x1, y1;
-  uint16_t w, h;
-
-  // Smart Noise
-  display.getTextBounds(
-    title1,
-    0,
-    0,
-    &x1,
-    &y1,
-    &w,
-    &h
-  );
-
-  display.setCursor(
-    (SCREEN_WIDTH - w) / 2,
-    0
-  );
-
-  display.println(
-    title1
-  );
-
-  // Monitoring
-  display.getTextBounds(
-    title2,
-    0,
-    0,
-    &x1,
-    &y1,
-    &w,
-    &h
-  );
-
-  display.setCursor(
-    (SCREEN_WIDTH - w) / 2,
-    9
-  );
-
-  display.println(
-    title2
-  );
+  drawCentered("Smart Noise", 0);
+  drawCentered("Monitoring", 9);
 
   // dB VALUE
   display.setTextSize(2);
-
-  String dbText =
-    String(dB, 1) +
-    " dB";
-
-  display.getTextBounds(
-    dbText,
-    0,
-    0,
-    &x1,
-    &y1,
-    &w,
-    &h
-  );
-
-  display.setCursor(
-    (SCREEN_WIDTH - w) / 2,
-    20
-  );
-
-  display.println(
-    dbText
-  );
+  drawCentered(String(dB, 1) + " dB", 20);
 
   // STATUS
   display.setTextSize(1);
-
-  display.getTextBounds(
-    status,
-    0,
-    0,
-    &x1,
-    &y1,
-    &w,
-    &h
-  );
-
-  display.setCursor(
-    (SCREEN_WIDTH - w) / 2,
-    39
-  );
-
-  display.println(
-    status
-  );
+  drawCentered(status, 39);
 
   // TEMPERATURE
-  display.setCursor(
-    5,
-    53
-  );
-
-  if (
-    isnan(temperature)
-  ) {
-
-    display.print(
-      "T: Error"
-    );
-
+  display.setCursor(5, 53);
+  if (isnan(temperature)) {
+    display.print("T: Error");
   } else {
-
-    display.print(
-      "T:"
-    );
-
-    display.print(
-      temperature,
-      1
-    );
-
-    display.print(
-      "C"
-    );
+    display.print("T:");
+    display.print(temperature, 1);
+    display.print("C");
   }
 
   // HUMIDITY
-  display.setCursor(
-    70,
-    53
-  );
-
-  if (
-    isnan(humidity)
-  ) {
-
-    display.print(
-      "H: Error"
-    );
-
+  display.setCursor(70, 53);
+  if (isnan(humidity)) {
+    display.print("H: Error");
   } else {
-
-    display.print(
-      "H:"
-    );
-
-    display.print(
-      humidity,
-      1
-    );
-
-    display.print(
-      "%"
-    );
+    display.print("H:");
+    display.print(humidity, 1);
+    display.print("%");
   }
 
-  // DISPLAY OLED
   display.display();
 }
 
 // SEND DATA TO FIREBASE
-void sendToFirebase(
-  float dB,
-  String status,
-  float temperature,
-  float humidity
-) {
+void sendToFirebase(float dB, String status, float temperature, float humidity) {
 
-  // Pastikan Firebase siap
-  if (
-    !Firebase.ready()
-  ) {
-
-    Serial.println(
-      "Firebase belum siap."
-    );
-
+  // Pastikan sign-up berhasil dan Firebase siap
+  if (!signupOK || !Firebase.ready()) {
+    Serial.println("Firebase belum siap.");
     return;
   }
 
-  // BASE PATH
-  String basePath =
-    "/locations/" +
-    String(LOCATION);
+  String basePath = "/locations/" + String(LOCATION);
 
   // SEND NOISE
-  if (
-    Firebase.RTDB.setFloat(
-      &fbdo,
-      basePath + "/noise",
-      dB
-    )
-  ) {
-
-    Serial.println(
-      "Noise berhasil dikirim."
-    );
-
+  if (Firebase.RTDB.setFloat(&fbdo, basePath + "/noise", dB)) {
+    Serial.println("Noise berhasil dikirim.");
   } else {
-
-    Serial.print(
-      "Noise gagal: "
-    );
-
-    Serial.println(
-      fbdo.errorReason()
-    );
+    Serial.print("Noise gagal: ");
+    Serial.println(fbdo.errorReason());
   }
 
   // SEND STATUS
-  if (
-    Firebase.RTDB.setString(
-      &fbdo,
-      basePath + "/status",
-      status
-    )
-  ) {
-
-    Serial.println(
-      "Status berhasil dikirim."
-    );
-
+  if (Firebase.RTDB.setString(&fbdo, basePath + "/status", status)) {
+    Serial.println("Status berhasil dikirim.");
   } else {
-
-    Serial.print(
-      "Status gagal: "
-    );
-
-    Serial.println(
-      fbdo.errorReason()
-    );
+    Serial.print("Status gagal: ");
+    Serial.println(fbdo.errorReason());
   }
 
   // SEND TEMPERATURE
-  if (
-    !isnan(temperature)
-  ) {
-
-    if (
-      Firebase.RTDB.setFloat(
-        &fbdo,
-        basePath + "/temperature",
-        temperature
-      )
-    ) {
-
-      Serial.println(
-        "Temperature berhasil dikirim."
-      );
-
+  if (!isnan(temperature)) {
+    if (Firebase.RTDB.setFloat(&fbdo, basePath + "/temperature", temperature)) {
+      Serial.println("Temperature berhasil dikirim.");
     } else {
-
-      Serial.print(
-        "Temperature gagal: "
-      );
-
-      Serial.println(
-        fbdo.errorReason()
-      );
+      Serial.print("Temperature gagal: ");
+      Serial.println(fbdo.errorReason());
     }
   }
 
   // SEND HUMIDITY
-  if (
-    !isnan(humidity)
-  ) {
-
-    if (
-      Firebase.RTDB.setFloat(
-        &fbdo,
-        basePath + "/humidity",
-        humidity
-      )
-    ) {
-
-      Serial.println(
-        "Humidity berhasil dikirim."
-      );
-
+  if (!isnan(humidity)) {
+    if (Firebase.RTDB.setFloat(&fbdo, basePath + "/humidity", humidity)) {
+      Serial.println("Humidity berhasil dikirim.");
     } else {
-
-      Serial.print(
-        "Humidity gagal: "
-      );
-
-      Serial.println(
-        fbdo.errorReason()
-      );
+      Serial.print("Humidity gagal: ");
+      Serial.println(fbdo.errorReason());
     }
   }
 
   // LOCATION
-  Firebase.RTDB.setString(
-    &fbdo,
-    basePath + "/location",
-    LOCATION
-  );
+  Firebase.RTDB.setString(&fbdo, basePath + "/location", LOCATION);
 
   // TIMESTAMP SEMENTARA
-  Firebase.RTDB.setString(
-    &fbdo,
-    basePath + "/last_update",
-    String(millis())
-  );
+  Firebase.RTDB.setString(&fbdo, basePath + "/last_update", String(millis()));
 
-  // FINISHED
-  Serial.println(
-    "Data Firebase selesai dikirim."
-  );
-
-  Serial.println(
-    "------------------------------"
-  );
+  Serial.println("Data Firebase selesai dikirim.");
+  Serial.println("------------------------------");
 }
 
 // MAIN LOOP
 void loop() {
 
   // READ NOISE
-  float dB =
-    readNoiseLevel();
+  float dB = readNoiseLevel();
 
-  // READ DHT11
-  float temperature =
-    dht.readTemperature();
+  // READ DHT22
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
 
-  float humidity =
-    dht.readHumidity();
+  if (!isnan(t)) lastTemperature = t;
+  if (!isnan(h)) lastHumidity = h;
+
+  float temperature = lastTemperature;
+  float humidity = lastHumidity;
 
   // NOISE STATUS
-  String status =
-    getStatus(
-      dB
-    );
+  String status = getStatus(dB);
 
-  // UPDATE LED
-  updateLED(
-    dB
-  );
-
-  // UPDATE OLED
-  updateOLED(
-    dB,
-    status,
-    temperature,
-    humidity
-  );
+  // UPDATE LED & OLED
+  updateLED(dB);
+  updateOLED(dB, status, temperature, humidity);
 
   // SERIAL MONITOR
-  Serial.println(
-    "=============================="
-  );
+  Serial.println("==============================");
 
-  Serial.print(
-    "Location    : "
-  );
+  Serial.print("Location    : ");
+  Serial.println(LOCATION);
 
-  Serial.println(
-    LOCATION
-  );
+  Serial.print("Noise Level : ");
+  Serial.print(dB, 1);
+  Serial.println(" dB");
 
+  Serial.print("Status      : ");
+  Serial.println(status);
 
-  Serial.print(
-    "Noise Level : "
-  );
-
-  Serial.print(
-    dB,
-    1
-  );
-
-  Serial.println(
-    " dB"
-  );
-
-
-  Serial.print(
-    "Status      : "
-  );
-
-  Serial.println(
-    status
-  );
-
-
-  Serial.print(
-    "Temperature : "
-  );
-
-  if (
-    isnan(temperature)
-  ) {
-
-    Serial.println(
-      "Error"
-    );
-
+  Serial.print("Temperature : ");
+  if (isnan(temperature)) {
+    Serial.println("Error");
   } else {
-
-    Serial.print(
-      temperature,
-      1
-    );
-
-    Serial.println(
-      " C"
-    );
+    Serial.print(temperature, 1);
+    Serial.println(" C");
   }
 
-
-  Serial.print(
-    "Humidity    : "
-  );
-
-  if (
-    isnan(humidity)
-  ) {
-
-    Serial.println(
-      "Error"
-    );
-
+  Serial.print("Humidity    : ");
+  if (isnan(humidity)) {
+    Serial.println("Error");
   } else {
-
-    Serial.print(
-      humidity,
-      1
-    );
-
-    Serial.println(
-      " %"
-    );
+    Serial.print(humidity, 1);
+    Serial.println(" %");
   }
 
-
-  Serial.println(
-    "=============================="
-  );
+  Serial.println("==============================");
 
   // SEND DATA TO FIREBASE
-  if (
-    millis() -
-    previousFirebaseMillis >=
-    FIREBASE_INTERVAL
-  ) {
-
-    previousFirebaseMillis =
-      millis();
-
-    sendToFirebase(
-      dB,
-      status,
-      temperature,
-      humidity
-    );
+  if (millis() - previousFirebaseMillis >= FIREBASE_INTERVAL) {
+    previousFirebaseMillis = millis();
+    sendToFirebase(dB, status, temperature, humidity);
   }
+
   delay(2000);
 }
