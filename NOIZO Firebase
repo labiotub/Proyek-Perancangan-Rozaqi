@@ -22,7 +22,7 @@
 // Alat 1 : "kantin"
 // Alat 2 : "perpustakaan"
 // Alat 3 : "parkiran"
-#define LOCATION "kantin"
+#define LOCATION "perpustakaan"
 
 // FIREBASE OBJECT
 FirebaseData fbdo;
@@ -53,13 +53,18 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 // NOISE THRESHOLD
 // < 60 dB       = Good
-// 60 - 100 dB   = Getting Too Loud
-// > 100 dB      = Too Loud!!!
+// 60 - 75 dB    = Getting Too Loud
+// > 75 dB       = Too Loud!!!
 #define LOW_THRESHOLD 60.0
-#define HIGH_THRESHOLD 100.0
+#define HIGH_THRESHOLD 75.0
 
-// CALIBRATION
-float DB_OFFSET = 50.0;
+// CALIBRATION (MAX4466)
+// Kalibrasi satu titik terhadap sound level meter di HP:
+// saat suara musik terbaca DB_REF di HP, sensor menghasilkan
+// RMS sebesar RMS_REF (satuan hitungan ADC).
+// Jika posisi trimmer gain diubah, kalibrasi ulang.
+float RMS_REF = 265.0;
+float DB_REF  = 65.0;
 
 // Nilai DHT valid terakhir (dipakai jika pembacaan gagal)
 float lastTemperature = NAN;
@@ -94,7 +99,8 @@ void setup() {
   analogReadResolution(12);
   analogSetPinAttenuation(SOUND_PIN, ADC_11db);
 
-    dht.begin();
+  // DHT22
+  dht.begin();
 
   // OLED
   Wire.begin(OLED_SDA, OLED_SCL);
@@ -157,32 +163,38 @@ void setup() {
 
 // READ SOUND LEVEL
 float readNoiseLevel() {
-  const int samples = 500;
+  const unsigned long WINDOW_US = 100000;   // jendela pengukuran 100 ms
 
-  // Rata-rata sinyal (DC offset)
-  float sum = 0;
-  for (int i = 0; i < samples; i++) {
-    sum += analogRead(SOUND_PIN);
-    delayMicroseconds(200);
-  }
-  float mean = sum / samples;
+  double sum = 0;
+  double sumSquare = 0;
+  unsigned long n = 0;
 
-  // RMS sinyal AC
-  float sumSquare = 0;
-  for (int i = 0; i < samples; i++) {
-    float acSignal = analogRead(SOUND_PIN) - mean;
-    sumSquare += acSignal * acSignal;
-    delayMicroseconds(200);
+  unsigned long start = micros();
+  while (micros() - start < WINDOW_US) {
+    int raw = analogRead(SOUND_PIN);
+    sum += raw;
+    sumSquare += (double)raw * raw;
+    n++;
   }
-  float rms = sqrt(sumSquare / samples);
+
+  double mean = sum / n;
+
+  // RMS sinyal AC = akar dari varians
+  double variance = sumSquare / n - mean * mean;
+  if (variance < 0) {
+    variance = 0;
+  }
+  float rms = sqrt(variance);
 
   // Hindari log(0)
   if (rms < 1) {
     rms = 1;
   }
 
-  // Estimasi nilai dB
-  return 20.0 * log10(rms) + DB_OFFSET;
+  // Estimasi dB (20 dB per dekade, sesuai sifat mikrofon)
+  float dB = DB_REF + 20.0 * log10(rms / RMS_REF);
+
+  return constrain(dB, 30.0, 120.0);
 }
 
 // DETERMINE NOISE STATUS
@@ -369,5 +381,5 @@ void loop() {
     sendToFirebase(dB, status, temperature, humidity);
   }
 
-  delay(2000);
+  delay(500);
 }
