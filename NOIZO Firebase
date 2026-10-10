@@ -1,3 +1,8 @@
+// ===================================================
+// Smart Noise Monitoring
+// ESP32 + MAX4466 + DHT22 + OLED SSD1306 + Firebase RTDB
+// ===================================================
+
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
 #include <Wire.h>
@@ -73,6 +78,11 @@ float lastHumidity = NAN;
 // FIREBASE TIMING (kirim setiap 3 detik)
 unsigned long previousFirebaseMillis = 0;
 const unsigned long FIREBASE_INTERVAL = 3000;
+
+// HELPER: bulatkan ke 1 angka di belakang koma
+float round1(float value) {
+  return roundf(value * 10.0) / 10.0;
+}
 
 // HELPER: teks rata tengah di OLED
 void drawCentered(String text, int y) {
@@ -152,6 +162,9 @@ void setup() {
 
   Firebase.begin(&config, &auth);
   Firebase.reconnectNetwork(true);
+
+  // Kirim angka desimal ke Firebase dengan 1 angka di belakang koma
+  Firebase.setFloatDigits(1);
 
   Serial.println("Firebase initialized!");
 
@@ -325,7 +338,7 @@ void sendToFirebase(float dB, String status, float temperature, float humidity) 
 void loop() {
 
   // READ NOISE
-  float dB = readNoiseLevel();
+  float dB = round1(readNoiseLevel());
 
   // READ DHT22
   float t = dht.readTemperature();
@@ -334,8 +347,8 @@ void loop() {
   if (!isnan(t)) lastTemperature = t;
   if (!isnan(h)) lastHumidity = h;
 
-  float temperature = lastTemperature;
-  float humidity = lastHumidity;
+  float temperature = round1(lastTemperature);
+  float humidity = round1(lastHumidity);
 
   // NOISE STATUS
   String status = getStatus(dB);
