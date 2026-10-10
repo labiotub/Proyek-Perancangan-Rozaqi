@@ -1,8 +1,3 @@
-// ===================================================
-// Smart Noise Monitoring
-// ESP32 + MAX4466 + DHT22 + OLED SSD1306 + Firebase RTDB
-// ===================================================
-
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
 #include <Wire.h>
