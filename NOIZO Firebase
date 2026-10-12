@@ -11,8 +11,8 @@
 #include <addons/RTDBHelper.h>
 
 // WIFI CONFIGURATION
-#define WIFI_SSID "Lab_IoT"
-#define WIFI_PASSWORD "L@bi0t63"
+#define WIFI_SSID "NOIZO"
+#define WIFI_PASSWORD "noizo6323"
 
 // FIREBASE CONFIGURATION
 #define API_KEY "AIzaSyAu-MkIeEmsP1Db1kecR3IipR7FcFtxoac"
